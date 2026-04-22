@@ -1,4 +1,4 @@
-const CACHE_NAME = 'allstars-v3';
+const CACHE_NAME = 'allstars-v4';
 
 self.addEventListener('install', function(event) {
   self.skipWaiting();
@@ -33,6 +33,14 @@ self.addEventListener('fetch', function(event) {
 
   if (url.pathname.includes('/Build/')) {
     event.respondWith(fetch(event.request));
+    return;
+  }
+
+  const balancingMatch = url.pathname.match(/(.*SerializedBalancingDataContainer_[\d.]+)\.0(\.bytes)$/);
+  if (balancingMatch) {
+    const rewritten = new URL(url.href);
+    rewritten.pathname = balancingMatch[1] + balancingMatch[2];
+    event.respondWith(fetch(rewritten.href));
     return;
   }
 
