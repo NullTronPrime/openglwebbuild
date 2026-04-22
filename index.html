@@ -6,7 +6,6 @@
     <title>Unity Web Player | All Stars</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
-    <!-- PWA Support -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#000000">
     <meta name="mobile-web-app-capable" content="yes">
@@ -24,6 +23,18 @@
         });
       }
     </script>
+    <style>
+      #chunk-status {
+        position: absolute;
+        left: 50%; top: 50%;
+        transform: translate(-50%, -50%);
+        color: #fff;
+        font-family: arial;
+        font-size: 14px;
+        text-align: center;
+        pointer-events: none;
+      }
+    </style>
   </head>
   <body>
     <div id="unity-container" class="unity-desktop">
@@ -34,6 +45,7 @@
           <div id="unity-progress-bar-full"></div>
         </div>
       </div>
+      <div id="chunk-status">Downloading game data… 0%</div>
       <div id="unity-warning"> </div>
       <div id="unity-footer">
         <div id="unity-logo-title-footer"></div>
@@ -41,8 +53,24 @@
         <div id="unity-build-title">All Stars</div>
       </div>
     </div>
+
     <script>
+      // ─────────────────────────────────────────────────────────────────────────
+      // CONFIGURATION — replace with your actual GitHub Release URLs after
+      // running split_data.py and uploading the chunks to a GitHub Release.
+      // Example tag: https://github.com/nulltronprime/openglwebbuild/releases/download/gamedata-v1/
+      // ─────────────────────────────────────────────────────────────────────────
+      const CHUNK_BASE = "https://github.com/nulltronprime/openglwebbuild/releases/download/gamedata-v1/";
+      const CHUNK_URLS = [
+        "https://github.com/USERNAME/REPO/releases/download/TAG/data.part000",
+        "https://github.com/USERNAME/REPO/releases/download/TAG/data.part001",
+      ];
+
+      // ─────────────────────────────────────────────────────────────────────────
+
       var canvas = document.querySelector("#unity-canvas");
+      var statusEl = document.querySelector("#chunk-status");
+      var progressBarFull = document.querySelector("#unity-progress-bar-full");
 
       function unityShowBanner(msg, type) {
         var warningBanner = document.querySelector("#unity-warning");
@@ -63,50 +91,129 @@
         updateBannerVisibility();
       }
 
-      var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/all stars webgl port.loader.js";
-      var config = {
-        arguments: [],
-        dataUrl: "https://files.catbox.moe/byzc4j.data",
-        frameworkUrl: buildUrl + "/all stars webgl port.framework.js",
-        codeUrl: buildUrl + "/all stars webgl port.wasm",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "Drippy Studios",
-        productName: "All Stars",
-        productVersion: "3.0.27463.4823",
-        showBanner: unityShowBanner,
-      };
+      /**
+       * Downloads all chunks in parallel, then concatenates them.
+       * Returns a Promise<Blob> with the stitched data.
+       * onProgress(0‥1) is called as chunks arrive.
+       */
+      async function downloadAndStitchChunks(urls, onProgress) {
+        const loaded = new Array(urls.length).fill(0);
+        const totals = new Array(urls.length).fill(0);
+        const buffers = new Array(urls.length);
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        document.querySelector("#unity-container").className = "unity-mobile";
-        canvas.className = "unity-mobile";
-      } else {
-        canvas.style.width = "960px";
-        canvas.style.height = "600px";
+        function reportProgress() {
+          const totalBytes = totals.reduce((a, b) => a + b, 0);
+          const loadedBytes = loaded.reduce((a, b) => a + b, 0);
+          if (totalBytes > 0) onProgress(loadedBytes / totalBytes);
+        }
+
+        await Promise.all(urls.map(async (url, i) => {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`Failed to fetch chunk ${i}: ${url} (${response.status})`);
+
+          const contentLength = response.headers.get("Content-Length");
+          totals[i] = contentLength ? parseInt(contentLength) : 0;
+
+          // Stream the response so we can report progress per chunk
+          const reader = response.body.getReader();
+          const chunks = [];
+          let received = 0;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.length;
+            loaded[i] = received;
+            if (totals[i] === 0) totals[i] = received; // update estimate if no content-length
+            reportProgress();
+          }
+
+          // Concatenate this chunk's pieces
+          const total = chunks.reduce((sum, c) => sum + c.length, 0);
+          const combined = new Uint8Array(total);
+          let offset = 0;
+          for (const c of chunks) { combined.set(c, offset); offset += c.length; }
+          buffers[i] = combined;
+        }));
+
+        // Stitch all parts together
+        const totalSize = buffers.reduce((sum, b) => sum + b.length, 0);
+        const stitched = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const buf of buffers) { stitched.set(buf, offset); offset += buf.length; }
+
+        return new Blob([stitched], { type: "application/octet-stream" });
       }
 
-      document.querySelector("#unity-loading-bar").style.display = "block";
+      async function boot() {
+        document.querySelector("#unity-loading-bar").style.display = "block";
+        statusEl.style.display = "block";
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
-        }).then((unityInstance) => {
-          document.querySelector("#unity-loading-bar").style.display = "none";
-          document.querySelector("#unity-fullscreen-button").onclick = () => {
-            unityInstance.SetFullscreen(1);
-          };
-        }).catch((message) => {
-          alert(message);
-        });
-      };
+        let dataUrl;
+        try {
+          statusEl.textContent = "Downloading game data… 0%";
+          const blob = await downloadAndStitchChunks(CHUNK_URLS, (p) => {
+            const pct = Math.round(p * 100);
+            statusEl.textContent = `Downloading game data… ${pct}%`;
+            // Use first half of bar for chunk download, second half for Unity init
+            progressBarFull.style.width = (p * 50) + "%";
+          });
+          dataUrl = URL.createObjectURL(blob);
+          statusEl.textContent = "Starting game…";
+        } catch (err) {
+          statusEl.textContent = "Download failed: " + err.message;
+          console.error(err);
+          return;
+        }
 
-      document.body.appendChild(script);
+        var buildUrl = "Build";
+        var config = {
+          arguments: [],
+          dataUrl: dataUrl,                                        // ← blob URL, no CORS issues
+          frameworkUrl: buildUrl + "/all stars webgl port.framework.js",
+          codeUrl:      buildUrl + "/all stars webgl port.wasm",
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "Drippy Studios",
+          productName: "All Stars",
+          productVersion: "3.0.27463.4823",
+          showBanner: unityShowBanner,
+        };
+
+        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+          var meta = document.createElement('meta');
+          meta.name = 'viewport';
+          meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+          document.getElementsByTagName('head')[0].appendChild(meta);
+          document.querySelector("#unity-container").className = "unity-mobile";
+          canvas.className = "unity-mobile";
+        } else {
+          canvas.style.width = "960px";
+          canvas.style.height = "600px";
+        }
+
+        var script = document.createElement("script");
+        script.src = buildUrl + "/all stars webgl port.loader.js";
+        script.onload = () => {
+          createUnityInstance(canvas, config, (progress) => {
+            // Unity's own progress covers the second half of the bar
+            progressBarFull.style.width = (50 + progress * 50) + "%";
+          }).then((unityInstance) => {
+            URL.revokeObjectURL(dataUrl); // free memory once Unity has parsed it
+            statusEl.style.display = "none";
+            document.querySelector("#unity-loading-bar").style.display = "none";
+            document.querySelector("#unity-fullscreen-button").onclick = () => {
+              unityInstance.SetFullscreen(1);
+            };
+          }).catch((message) => {
+            statusEl.textContent = "Unity error: " + message;
+            alert(message);
+          });
+        };
+        document.body.appendChild(script);
+      }
+
+      boot();
     </script>
   </body>
 </html>
