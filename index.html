@@ -301,8 +301,6 @@
         <div id="crash-title">Game Crashed</div>
         <div id="crash-message"></div>
         <div id="crash-countdown"></div>
-        <!-- FIX: location.reload(true) forces a hard reload, bypassing the service worker
-             cache so the game doesn't reload a stale build after a crash. -->
         <button id="crash-reload" onclick="location.reload(true)">Reload Now</button>
       </div>
     </div>
@@ -348,21 +346,18 @@
           setTimeout(() => { d.remove(); if (!w.children.length) w.style.display = "none"; }, 6000);
       }
 
-      // Auto-reload countdown after crash (10 seconds).
       let _crashCountdownTimer = null;
       function showCrash(msg) {
         const el = document.getElementById("crash-overlay");
         if (el.classList.contains("visible")) return;
 
-        // Filter out the noisy "undefined" bare message Unity sometimes emits.
         const displayMsg = (!msg || msg === "undefined" || String(msg).trim() === "undefined")
-          ? "Unity runtime exception (wasm stack overflow or scene-load failure).\nCheck browser console for details."
+          ? "Unity runtime exception.\nCheck browser console for details."
           : (typeof msg === "string" ? msg : JSON.stringify(msg, null, 2));
 
         document.getElementById("crash-message").textContent = displayMsg;
         el.classList.add("visible");
 
-        // Start 10-second auto-reload countdown.
         let secs = 10;
         const cntEl = document.getElementById("crash-countdown");
         cntEl.textContent = `Auto-reloading in ${secs}s…`;
@@ -370,16 +365,13 @@
           secs--;
           if (secs <= 0) {
             clearInterval(_crashCountdownTimer);
-            location.reload(true); // hard reload — bypasses SW cache
+            location.reload(true);
           } else {
             cntEl.textContent = `Auto-reloading in ${secs}s…`;
           }
         }, 1000);
       }
 
-      // Intercept Unity's alert() calls.
-      // Unity's loader.js triggers window.alert() with the fatal error string,
-      // e.g. "[AllStars] Unity fatal error: An error occurred running the Unity content…"
       const _origAlert = window.alert.bind(window);
       window.alert = function (msg) {
         if (typeof msg === "string" &&
@@ -392,11 +384,6 @@
         }
       };
 
-      // Intercept console.error for Unity crash patterns seen in the logs:
-      //   "Uncaught exception from main loop"  ← wasm stack overflow during scene load
-      //   "Invoking error handler due to"      ← loader.js fatal error path
-      //   "[AllStars] Unity fatal error"        ← HTML page error handler
-      //   "Halting program"                     ← Unity hard abort
       const _origConsoleError = console.error.bind(console);
       console.error = function (...args) {
         _origConsoleError(...args);
@@ -409,7 +396,6 @@
         }
       };
 
-      // Catch unhandled JS/wasm errors.
       window.addEventListener("error", function (e) {
         const msg = (e.error ? e.error.stack || e.error.toString() : "") || e.message || String(e);
         if (msg.includes("wasm") || msg.includes("Unity") || msg.includes("Uncaught")) {
@@ -417,8 +403,6 @@
         }
       });
 
-      // Keep the browser event loop alive — prevents the tab from being throttled
-      // which can cause Unity's requestAnimationFrame loop to stall.
       try {
         const blob   = new Blob(["let iv=setInterval(()=>self.postMessage('t'),200);"], { type: "application/javascript" });
         const worker = new Worker(URL.createObjectURL(blob));
@@ -490,17 +474,7 @@
           streamingAssetsUrl:         "StreamingAssets",
           companyName:                "Drippy Studios",
           productName:                "All Stars",
-          // NOTE: Must remain "3.0.1" (3-part).
-          // The game uses productVersion to construct the balancing-data filename:
-          //   live_SerializedBalancingDataContainer_<productVersion>.bytes
-          // That file exists only as "3.0.1.bytes" in StreamingAssets.
-          // Changing this to a 4-part version (e.g. "3.0.27463.4821") makes the game
-          // request "3.0.1.0.bytes" instead → 404 → game hangs in retry loop forever.
-          // The "[Version] No build number" warning that "3.0.1" triggers is non-fatal;
-          // the 404 on the balancing data is fatal.
           productVersion:             "3.0.1",
-          // FIX: opt in to automatic IndexedDB sync; suppresses the
-          // "JS_FileSystem_Sync() is deprecated" deprecation warning.
           autoSyncPersistentDataPath: true,
           showBanner:                 showWarning,
         };
