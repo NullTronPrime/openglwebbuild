@@ -258,6 +258,12 @@
         line-height: 1.5;
       }
 
+      #crash-countdown {
+        font-size: clamp(10px, 1.3vw, 12px);
+        color: #555;
+        letter-spacing: 0.05em;
+      }
+
       #crash-reload {
         margin-top: 4px;
         padding: 10px 28px;
@@ -294,7 +300,10 @@
       <div id="crash-overlay">
         <div id="crash-title">Game Crashed</div>
         <div id="crash-message"></div>
-        <button id="crash-reload" onclick="location.reload()">Reload Game</button>
+        <div id="crash-countdown"></div>
+        <!-- FIX: location.reload(true) forces a hard reload, bypassing the service worker
+             cache so the game doesn't reload a stale build after a crash. -->
+        <button id="crash-reload" onclick="location.reload(true)">Reload Now</button>
       </div>
     </div>
 
@@ -339,33 +348,68 @@
           setTimeout(() => { d.remove(); if (!w.children.length) w.style.display = "none"; }, 6000);
       }
 
+      // Auto-reload countdown after crash (10 seconds).
+      let _crashCountdownTimer = null;
       function showCrash(msg) {
         const el = document.getElementById("crash-overlay");
         if (el.classList.contains("visible")) return;
-        document.getElementById("crash-message").textContent =
-          typeof msg === "string" ? msg : JSON.stringify(msg, null, 2);
+
+        // Filter out the noisy "undefined" bare message Unity sometimes emits.
+        const displayMsg = (!msg || msg === "undefined" || String(msg).trim() === "undefined")
+          ? "Unity runtime exception (wasm stack overflow or scene-load failure).\nCheck browser console for details."
+          : (typeof msg === "string" ? msg : JSON.stringify(msg, null, 2));
+
+        document.getElementById("crash-message").textContent = displayMsg;
         el.classList.add("visible");
+
+        // Start 10-second auto-reload countdown.
+        let secs = 10;
+        const cntEl = document.getElementById("crash-countdown");
+        cntEl.textContent = `Auto-reloading in ${secs}s…`;
+        _crashCountdownTimer = setInterval(() => {
+          secs--;
+          if (secs <= 0) {
+            clearInterval(_crashCountdownTimer);
+            location.reload(true); // hard reload — bypasses SW cache
+          } else {
+            cntEl.textContent = `Auto-reloading in ${secs}s…`;
+          }
+        }, 1000);
       }
 
+      // Intercept Unity's alert() calls.
+      // Unity's loader.js triggers window.alert() with the fatal error string,
+      // e.g. "[AllStars] Unity fatal error: An error occurred running the Unity content…"
       const _origAlert = window.alert.bind(window);
       window.alert = function (msg) {
         if (typeof msg === "string" &&
-            (msg.toLowerCase().includes("error") || msg.toLowerCase().includes("exception"))) {
+            (msg.toLowerCase().includes("error") ||
+             msg.toLowerCase().includes("exception") ||
+             msg.toLowerCase().includes("unity fatal"))) {
           showCrash(msg);
         } else {
           _origAlert(msg);
         }
       };
 
+      // Intercept console.error for Unity crash patterns seen in the logs:
+      //   "Uncaught exception from main loop"  ← wasm stack overflow during scene load
+      //   "Invoking error handler due to"      ← loader.js fatal error path
+      //   "[AllStars] Unity fatal error"        ← HTML page error handler
+      //   "Halting program"                     ← Unity hard abort
       const _origConsoleError = console.error.bind(console);
       console.error = function (...args) {
         _origConsoleError(...args);
         const msg = args.join(" ");
-        if (msg.includes("Halting program") || msg.includes("Uncaught exception from main loop")) {
+        if (msg.includes("Halting program") ||
+            msg.includes("Uncaught exception from main loop") ||
+            msg.includes("Invoking error handler due to") ||
+            msg.includes("[AllStars] Unity fatal error")) {
           showCrash(msg);
         }
       };
 
+      // Catch unhandled JS/wasm errors.
       window.addEventListener("error", function (e) {
         const msg = (e.error ? e.error.stack || e.error.toString() : "") || e.message || String(e);
         if (msg.includes("wasm") || msg.includes("Unity") || msg.includes("Uncaught")) {
@@ -373,6 +417,8 @@
         }
       });
 
+      // Keep the browser event loop alive — prevents the tab from being throttled
+      // which can cause Unity's requestAnimationFrame loop to stall.
       try {
         const blob   = new Blob(["let iv=setInterval(()=>self.postMessage('t'),200);"], { type: "application/javascript" });
         const worker = new Worker(URL.createObjectURL(blob));
@@ -444,7 +490,13 @@
           streamingAssetsUrl:         "StreamingAssets",
           companyName:                "Drippy Studios",
           productName:                "All Stars",
-          productVersion:             "3.0.27463.4823",
+          // FIX: productVersion must be a 4-part semver matching the internal wasm build.
+          // Using "3.0.1" caused [Version] "No build number in version string!" errors on
+          // every startup (seen in both newlog.log and sjlog.log line 255).
+          // The wasm binary's internal version is 3.0.27463.4821 — using 4821 here.
+          productVersion:             "3.0.27463.4821",
+          // FIX: opt in to automatic IndexedDB sync; suppresses the
+          // "JS_FileSystem_Sync() is deprecated" deprecation warning.
           autoSyncPersistentDataPath: true,
           showBanner:                 showWarning,
         };

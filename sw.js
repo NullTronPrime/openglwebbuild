@@ -1,4 +1,9 @@
-const CACHE_NAME = 'allstars-v1';
+// FIX: Bumped cache name from 'allstars-v1' to 'allstars-v2'.
+// When the game crashes and the user reloads, the old SW would serve
+// the cached index.html rather than fetching a fresh copy.
+// Changing the name forces all stale caches to be deleted on activation,
+// so every reload after a crash always gets the latest shell files.
+const CACHE_NAME = 'allstars-v2';
 
 // Cache the shell files on install
 self.addEventListener('install', function(event) {
@@ -15,13 +20,28 @@ self.addEventListener('install', function(event) {
   );
 });
 
+// FIX: On activation, delete ALL old caches whose name doesn't match
+// the current CACHE_NAME. This ensures crash-reloads never serve
+// a stale index.html that could contain the old productVersion "3.0.1"
+// or other outdated config values.
 self.addEventListener('activate', function(event) {
-  event.waitUntil(clients.claim());
+  event.waitUntil(
+    caches.keys().then(function(cacheNames) {
+      return Promise.all(
+        cacheNames
+          .filter(function(name) { return name !== CACHE_NAME; })
+          .map(function(name) { return caches.delete(name); })
+      );
+    }).then(function() {
+      return clients.claim();
+    })
+  );
 });
 
 // Network first, fall back to cache
 self.addEventListener('fetch', function(event) {
-  // Don't cache the large Unity build files — always fetch from network
+  // Don't cache the large Unity build files — always fetch from network.
+  // Also never cache the main data file hosted on GitHub (different origin anyway).
   const url = new URL(event.request.url);
   const isBuildFile = url.pathname.includes('/Build/');
 
@@ -33,6 +53,13 @@ self.addEventListener('fetch', function(event) {
   event.respondWith(
     fetch(event.request)
       .then(function(response) {
+        // Only cache successful same-origin responses for shell files.
+        if (response.ok && response.type !== 'opaque') {
+          const responseClone = response.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(event.request, responseClone);
+          });
+        }
         return response;
       })
       .catch(function() {
