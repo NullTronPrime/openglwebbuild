@@ -53,8 +53,10 @@ self.addEventListener('fetch', function(event) {
   event.respondWith(
     fetch(event.request)
       .then(function(response) {
-        // Only cache successful same-origin responses for shell files.
-        if (response.ok && response.type !== 'opaque') {
+        // FIX: Only cache GET requests — the Cache API throws a TypeError if you
+        // try to cache POST/PUT/DELETE requests ("Request method 'POST' is unsupported").
+        // This was causing uncaught promise rejections on every non-GET fetch.
+        if (event.request.method === 'GET' && response.ok && response.type !== 'opaque') {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then(function(cache) {
             cache.put(event.request, responseClone);
