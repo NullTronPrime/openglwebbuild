@@ -3,47 +3,59 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>All Stars</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
-    <link rel="stylesheet" href="TemplateData/style.css">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#000000">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="All Stars">
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js').then(function (reg) {
-            console.log('SW registered:', reg.scope);
-          }).catch(function (err) {
+          navigator.serviceWorker.register('sw.js').catch(function (err) {
             console.log('SW registration failed:', err);
           });
         });
       }
     </script>
     <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html, body {
+        width: 100%;
+        height: 100%;
+        background: #0a0a0a;
+        overflow: hidden;
+      }
 
       body {
-        background: #0a0a0a;
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 100vh;
-        font-family: 'Segoe UI', sans-serif;
+        font-family: 'Segoe UI', system-ui, sans-serif;
       }
 
-      #unity-container { position: relative; }
-      #unity-container.unity-desktop { display: inline-block; }
-      #unity-container.unity-mobile { position: fixed; width: 100%; height: 100%; }
+      /* ── Wrapper that holds canvas + overlay, always centered ── */
+      #unity-container {
+        position: relative;
+        /* size set by JS after we know the viewport */
+        flex-shrink: 0;
+      }
 
       #unity-canvas {
-        background: #1a1a1a;
         display: block;
+        background: #111;
+        /* fill whatever size the container is */
+        width: 100%;
+        height: 100%;
       }
-      .unity-mobile #unity-canvas { width: 100%; height: 100%; }
 
       /* ── Loading overlay ── */
       #loading-overlay {
@@ -54,7 +66,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 20px;
+        gap: 18px;
         z-index: 10;
         transition: opacity 0.5s ease;
       }
@@ -62,24 +74,26 @@
         opacity: 0;
         pointer-events: none;
       }
+      #loading-overlay.hidden {
+        display: none;
+      }
 
       #game-title {
-        color: #fff;
-        font-size: 28px;
+        color: #ffffff;
+        font-size: clamp(18px, 3vw, 30px);
         font-weight: 700;
-        letter-spacing: 0.2em;
+        letter-spacing: 0.22em;
         text-transform: uppercase;
       }
 
       #status-text {
-        color: #888;
-        font-size: 13px;
-        letter-spacing: 0.05em;
+        color: #777;
+        font-size: clamp(11px, 1.5vw, 13px);
+        letter-spacing: 0.06em;
       }
 
-      /* Progress bar */
       #progress-track {
-        width: 260px;
+        width: min(260px, 60%);
         height: 4px;
         background: #222;
         border-radius: 2px;
@@ -90,23 +104,65 @@
         width: 0%;
         background: linear-gradient(90deg, #4a9eff, #9b59ff);
         border-radius: 2px;
-        transition: width 0.2s ease;
+        transition: width 0.25s ease;
       }
 
-      /* Footer */
-      #unity-footer { display: flex; align-items: center; justify-content: flex-end; padding: 6px 0; }
-      .unity-mobile #unity-footer { display: none; }
-      #unity-logo-title-footer { float: left; width: 102px; height: 38px; background: url('TemplateData/unity-logo-title-footer.png') no-repeat center; }
-      #unity-build-title { color: #555; font-size: 13px; margin-left: auto; margin-right: 8px; }
-      #unity-fullscreen-button { cursor: pointer; width: 38px; height: 38px; background: url('TemplateData/fullscreen-button.png') no-repeat center; background-size: contain; }
-      #unity-warning { position: absolute; left: 50%; top: 5%; transform: translate(-50%); background: #fffbe6; border: 1px solid #f0c040; padding: 10px 16px; border-radius: 6px; display: none; z-index: 20; font-size: 13px; color: #333; max-width: 420px; text-align: center; }
+      /* ── Footer ── */
+      #unity-footer {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 6px 8px;
+        background: rgba(0,0,0,0.4);
+        pointer-events: none;
+        z-index: 5;
+      }
+      #unity-build-title {
+        color: #444;
+        font-size: 12px;
+        margin-right: 8px;
+        pointer-events: none;
+      }
+      #unity-fullscreen-button {
+        cursor: pointer;
+        width: 32px;
+        height: 32px;
+        background: url('TemplateData/fullscreen-button.png') no-repeat center;
+        background-size: contain;
+        opacity: 0.5;
+        transition: opacity 0.2s;
+        pointer-events: all;
+      }
+      #unity-fullscreen-button:hover { opacity: 1; }
+
+      /* ── Warning banner ── */
+      #unity-warning {
+        position: absolute;
+        left: 50%;
+        top: 8%;
+        transform: translate(-50%);
+        z-index: 20;
+        display: none;
+        max-width: min(420px, 90%);
+        text-align: center;
+      }
+      #unity-warning div {
+        padding: 10px 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #333;
+        margin-bottom: 4px;
+      }
     </style>
   </head>
   <body>
-    <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+    <div id="unity-container">
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
 
-      <!-- Loading overlay sits on top of the canvas -->
       <div id="loading-overlay">
         <div id="game-title">All Stars</div>
         <div id="progress-track"><div id="progress-fill"></div></div>
@@ -114,56 +170,71 @@
       </div>
 
       <div id="unity-warning"></div>
+
       <div id="unity-footer">
-        <div id="unity-logo-title-footer"></div>
         <div id="unity-build-title">All Stars</div>
-        <div id="unity-fullscreen-button"></div>
+        <div id="unity-fullscreen-button" title="Fullscreen"></div>
       </div>
     </div>
 
     <script>
-      // ─────────────────────────────────────────────────────────────────────────
-      // DATA SOURCE
-      //
-      // The .data file is stored via Git LFS.
-      // media.githubusercontent.com serves LFS files with CORS headers — no
-      // chunking or proxy needed, and multiple players can stream simultaneously
-      // from GitHub's CDN.
-      // ─────────────────────────────────────────────────────────────────────────
+      // ── Config ──────────────────────────────────────────────────────────────
+      const GAME_ASPECT = 960 / 600;   // native aspect ratio
       const DATA_URL =
         "https://media.githubusercontent.com/media/nulltronprime/openglwebbuild/main/Build/all%20stars%20webgl%20port.data";
 
-      // ─────────────────────────────────────────────────────────────────────────
+      // ── Elements ─────────────────────────────────────────────────────────────
+      const container   = document.getElementById("unity-container");
+      const canvas      = document.getElementById("unity-canvas");
+      const overlay     = document.getElementById("loading-overlay");
+      const statusEl    = document.getElementById("status-text");
+      const progressEl  = document.getElementById("progress-fill");
 
-      var canvas      = document.getElementById("unity-canvas");
-      var overlay     = document.getElementById("loading-overlay");
-      var statusEl    = document.getElementById("status-text");
-      var progressEl  = document.getElementById("progress-fill");
-
+      // ── Helpers ───────────────────────────────────────────────────────────────
       function setProgress(pct) {
         progressEl.style.width = Math.min(100, Math.round(pct)) + "%";
       }
-
       function setStatus(msg) {
         statusEl.textContent = msg;
       }
-
       function showWarning(msg, type) {
-        var w = document.getElementById("unity-warning");
-        var div = document.createElement("div");
+        const w   = document.getElementById("unity-warning");
+        const div = document.createElement("div");
         div.textContent = msg;
-        div.style.cssText = type === "error"
-          ? "background:#ffe0e0;padding:8px;margin:4px 0;border-radius:4px;"
-          : "background:#fffbe6;padding:8px;margin:4px 0;border-radius:4px;";
+        div.style.background = type === "error" ? "#ffe0e0" : "#fffbe6";
         w.appendChild(div);
         w.style.display = "block";
-        if (type !== "error") setTimeout(() => { w.removeChild(div); if (!w.children.length) w.style.display = "none"; }, 5000);
+        if (type !== "error")
+          setTimeout(() => { div.remove(); if (!w.children.length) w.style.display = "none"; }, 6000);
       }
 
-      /**
-       * Fetch the data file with streaming progress, return an object URL.
-       * Works for any number of simultaneous users — each gets their own CDN stream.
-       */
+      // ── Responsive sizing ─────────────────────────────────────────────────────
+      function resize() {
+        // Leave a small margin so nothing is clipped. On mobile use full window.
+        const maxW = window.innerWidth;
+        const maxH = window.innerHeight;
+
+        let w, h;
+        if (maxW / maxH > GAME_ASPECT) {
+          // viewport is wider than the game → fit to height
+          h = maxH;
+          w = Math.round(h * GAME_ASPECT);
+        } else {
+          // viewport is taller than the game → fit to width
+          w = maxW;
+          h = Math.round(w / GAME_ASPECT);
+        }
+
+        container.style.width  = w + "px";
+        container.style.height = h + "px";
+        canvas.width  = w;
+        canvas.height = h;
+      }
+
+      resize();
+      window.addEventListener("resize", resize);
+
+      // ── Streaming download ────────────────────────────────────────────────────
       async function fetchDataWithProgress(url) {
         setStatus("Connecting…");
         const response = await fetch(url, { mode: "cors" });
@@ -174,7 +245,7 @@
         const chunks = [];
         let received = 0;
 
-        setStatus("Downloading game data… 0%");
+        setStatus("Downloading… 0%");
 
         while (true) {
           const { done, value } = await reader.read();
@@ -182,37 +253,24 @@
           chunks.push(value);
           received += value.length;
           if (contentLength > 0) {
-            const pct = (received / contentLength) * 80; // first 80% = download
+            const pct = (received / contentLength) * 80;
             setProgress(pct);
-            setStatus(`Downloading game data… ${Math.round(received / contentLength * 100)}%`);
+            setStatus(`Downloading… ${Math.round(received / contentLength * 100)}%`);
           } else {
             setStatus(`Downloading… ${(received / 1048576).toFixed(1)} MB`);
           }
         }
 
-        // Stitch chunks into a single Uint8Array
-        const total = chunks.reduce((s, c) => s + c.length, 0);
+        const total  = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(total);
-        let offset = 0;
+        let offset   = 0;
         for (const c of chunks) { merged.set(c, offset); offset += c.length; }
 
         return URL.createObjectURL(new Blob([merged], { type: "application/octet-stream" }));
       }
 
+      // ── Boot ──────────────────────────────────────────────────────────────────
       async function boot() {
-        // Mobile tweaks
-        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-          const meta = document.createElement("meta");
-          meta.name = "viewport";
-          meta.content = "width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes";
-          document.head.appendChild(meta);
-          document.getElementById("unity-container").className = "unity-mobile";
-          canvas.className = "unity-mobile";
-        } else {
-          canvas.style.width  = "960px";
-          canvas.style.height = "600px";
-        }
-
         let dataObjectUrl;
         try {
           dataObjectUrl = await fetchDataWithProgress(DATA_URL);
@@ -238,12 +296,12 @@
           showBanner:         showWarning,
         };
 
-        // Dynamically load the loader script
+        // Load Unity loader script
         await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = buildUrl + "/all stars webgl port.loader.js";
-          s.onload  = resolve;
-          s.onerror = () => reject(new Error("Failed to load loader script"));
+          const s    = document.createElement("script");
+          s.src      = buildUrl + "/all stars webgl port.loader.js";
+          s.onload   = resolve;
+          s.onerror  = () => reject(new Error("Failed to load Unity loader script"));
           document.body.appendChild(s);
         });
 
@@ -251,20 +309,21 @@
 
         try {
           const unityInstance = await createUnityInstance(canvas, config, (progress) => {
-            // Unity reports 0–1; map to 90–100%
             setProgress(90 + progress * 10);
-            setStatus("Loading game… " + Math.round(90 + progress * 10) + "%");
+            if (progress < 1) setStatus(`Loading… ${Math.round(90 + progress * 10)}%`);
           });
 
-          // Done — release the blob and hide the overlay
           URL.revokeObjectURL(dataObjectUrl);
           setProgress(100);
           overlay.classList.add("fade-out");
-          setTimeout(() => { overlay.style.display = "none"; }, 600);
+          setTimeout(() => { overlay.classList.add("hidden"); }, 600);
 
           document.getElementById("unity-fullscreen-button").onclick = () => {
             unityInstance.SetFullscreen(1);
           };
+
+          // Re-apply sizing after Unity is loaded (it can override canvas size)
+          resize();
         } catch (msg) {
           setStatus("Error: " + msg);
           console.error(msg);
