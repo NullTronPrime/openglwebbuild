@@ -1,0 +1,17 @@
+{
+  "name": "All Stars",
+  "short_name": "All Stars",
+  "description": "All Stars by Drippy Studios",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "TemplateData/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}
