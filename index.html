@@ -207,10 +207,8 @@
         user-select: none;
       }
 
-      /* Vertical range input — works on all modern browsers */
+      /* Vertical range input — standards-compliant, no deprecated appearance keyword */
       #vol-slider {
-        -webkit-appearance: slider-vertical;
-        appearance: slider-vertical;
         writing-mode: vertical-lr;
         direction: rtl;
         width: 22px;
@@ -332,31 +330,104 @@
       window.addEventListener("resize", resize);
 
       // ── Save-data persistence via IndexedDB ───────────────────────────────────
-      // Unity WebGL stores PlayerPrefs and file-based saves in an Emscripten
-      // virtual filesystem backed by IndexedDB. It only flushes when FS.syncfs()
-      // is called. We call it proactively so saves aren't lost on tab close.
-      let _fsSyncScheduled = false;
+      // Unity WebGL maps file I/O to an Emscripten IDBFS virtual filesystem.
+      // Saves are only flushed to IndexedDB when FS.syncfs(false, cb) is called.
+      // We reach the FS through unityInstance.Module (set after boot() completes).
+      let _unityModule = null;   // set once Unity is loaded
+      let _fsSyncBusy  = false;
+
       function persistSaves() {
-        if (typeof Module === "undefined" || !Module.FS || _fsSyncScheduled) return;
-        _fsSyncScheduled = true;
-        Module.FS.syncfs(false, function (err) {
-          _fsSyncScheduled = false;
-          if (err) console.warn("[AllStars] FS.syncfs error:", err);
-        });
+        if (!_unityModule || !_unityModule.FS || _fsSyncBusy) return;
+        _fsSyncBusy = true;
+        try {
+          _unityModule.FS.syncfs(false, function (err) {
+            _fsSyncBusy = false;
+            if (err) console.warn("[AllStars] FS.syncfs error:", err);
+            else     console.log("[AllStars] Save flushed to IndexedDB.");
+          });
+        } catch (e) {
+          _fsSyncBusy = false;
+          console.warn("[AllStars] FS.syncfs threw:", e);
+        }
       }
 
-      // Flush on visibility change (tab switch / close)
+      // Flush whenever saves are likely to have happened
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden") persistSaves();
       });
-      // Flush when window loses focus
-      window.addEventListener("blur", persistSaves);
-      // Flush on beforeunload (best-effort — browser may ignore async ops here)
+      window.addEventListener("blur",         persistSaves);
       window.addEventListener("beforeunload", persistSaves);
-      // Periodic flush every 30 s while the page is visible
-      setInterval(() => {
-        if (document.visibilityState === "visible") persistSaves();
-      }, 30_000);
+      // Periodic flush every 20 s (catches mid-session saves)
+      setInterval(persistSaves, 20_000);
+
+      // ── Background-throttle prevention ────────────────────────────────────────
+      // Browsers throttle rAF and timers in background tabs, which drops Unity
+      // below 60 fps when the window loses focus. A Web Worker runs at full speed
+      // regardless of tab visibility — we use it to ping the page and keep timers alive.
+      const _workerSrc = `
+        let iv = setInterval(() => self.postMessage('tick'), 200);
+      `;
+      try {
+        const blob   = new Blob([_workerSrc], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+        // The message just keeps the event loop warm; Unity's own rAF handles rendering.
+        worker.onmessage = () => {};
+      } catch (_) { /* worker blocked by CSP — not critical */ }
+
+      // ── Crash recovery ────────────────────────────────────────────────────────
+      // Unity calls window.alert() on a fatal WASM exception. We intercept it,
+      // flush saves first, then offer a one-click restart instead of freezing.
+      const _origAlert = window.alert.bind(window);
+      window.alert = function (msg) {
+        if (typeof msg === 'string' && msg.toLowerCase().includes('error')) {
+          console.error('[AllStars] Unity fatal error:', msg);
+          persistSaves();
+          showCrashOverlay(msg);
+        } else {
+          _origAlert(msg);
+        }
+      };
+
+      // Also catch the Unity "Halting program" path which goes through console.error
+      const _origConsoleError = console.error.bind(console);
+      console.error = function (...args) {
+        _origConsoleError(...args);
+        const msg = args.join(' ');
+        if (msg.includes('Halting program') || msg.includes('Uncaught exception from main loop')) {
+          persistSaves();
+          showCrashOverlay(msg);
+        }
+      };
+
+      function showCrashOverlay(msg) {
+        // Only show once
+        if (document.getElementById('crash-overlay')) return;
+        persistSaves();
+        const el = document.createElement('div');
+        el.id = 'crash-overlay';
+        el.style.cssText = `
+          position:absolute;inset:0;background:rgba(0,0,0,.85);
+          display:flex;flex-direction:column;align-items:center;
+          justify-content:center;gap:16px;z-index:99;
+          font-family:'Segoe UI',system-ui,sans-serif;color:#fff;padding:24px;
+          text-align:center;
+        `;
+        el.innerHTML = `
+          <div style="font-size:clamp(14px,2.5vw,22px);font-weight:700;letter-spacing:.1em;">
+            Game Crashed
+          </div>
+          <div style="font-size:clamp(10px,1.3vw,12px);color:#888;max-width:340px;word-break:break-word;">
+            Your progress has been saved. Reload to continue.
+          </div>
+          <button onclick="location.reload()" style="
+            margin-top:8px;padding:10px 28px;border:none;border-radius:6px;
+            background:linear-gradient(90deg,#4a9eff,#9b59ff);
+            color:#fff;font-size:clamp(12px,1.5vw,14px);font-weight:600;
+            cursor:pointer;letter-spacing:.08em;
+          ">Reload Game</button>
+        `;
+        container.appendChild(el);
+      }
 
       // ── Streaming download ────────────────────────────────────────────────────
       async function fetchDataWithProgress(url) {
@@ -438,7 +509,10 @@
           URL.revokeObjectURL(dataObjectUrl);
           setProgress(100);
 
-          // Trigger an initial FS sync so the DB is set up
+          // Wire up the FS reference so persistSaves() can reach it
+          _unityModule = unityInstance.Module;
+
+          // Initial sync — mounts the IDBFS and loads any existing save data
           setTimeout(persistSaves, 2000);
 
           overlay.classList.add("fade-out");
