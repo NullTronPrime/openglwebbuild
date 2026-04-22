@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity Web Player | All Stars</title>
+    <title>All Stars</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
     <link rel="manifest" href="manifest.json">
@@ -14,203 +14,261 @@
     <meta name="apple-mobile-web-app-title" content="All Stars">
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
-          navigator.serviceWorker.register('sw.js').then(function(reg) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('sw.js').then(function (reg) {
             console.log('SW registered:', reg.scope);
-          }).catch(function(err) {
+          }).catch(function (err) {
             console.log('SW registration failed:', err);
           });
         });
       }
     </script>
     <style>
-      #chunk-status {
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        background: #0a0a0a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        font-family: 'Segoe UI', sans-serif;
+      }
+
+      #unity-container { position: relative; }
+      #unity-container.unity-desktop { display: inline-block; }
+      #unity-container.unity-mobile { position: fixed; width: 100%; height: 100%; }
+
+      #unity-canvas {
+        background: #1a1a1a;
+        display: block;
+      }
+      .unity-mobile #unity-canvas { width: 100%; height: 100%; }
+
+      /* ── Loading overlay ── */
+      #loading-overlay {
         position: absolute;
-        left: 50%; top: 50%;
-        transform: translate(-50%, -50%);
-        color: #fff;
-        font-family: arial;
-        font-size: 14px;
-        text-align: center;
+        inset: 0;
+        background: #0d0d0d;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        z-index: 10;
+        transition: opacity 0.5s ease;
+      }
+      #loading-overlay.fade-out {
+        opacity: 0;
         pointer-events: none;
       }
+
+      #game-title {
+        color: #fff;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+
+      #status-text {
+        color: #888;
+        font-size: 13px;
+        letter-spacing: 0.05em;
+      }
+
+      /* Progress bar */
+      #progress-track {
+        width: 260px;
+        height: 4px;
+        background: #222;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      #progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #4a9eff, #9b59ff);
+        border-radius: 2px;
+        transition: width 0.2s ease;
+      }
+
+      /* Footer */
+      #unity-footer { display: flex; align-items: center; justify-content: flex-end; padding: 6px 0; }
+      .unity-mobile #unity-footer { display: none; }
+      #unity-logo-title-footer { float: left; width: 102px; height: 38px; background: url('TemplateData/unity-logo-title-footer.png') no-repeat center; }
+      #unity-build-title { color: #555; font-size: 13px; margin-left: auto; margin-right: 8px; }
+      #unity-fullscreen-button { cursor: pointer; width: 38px; height: 38px; background: url('TemplateData/fullscreen-button.png') no-repeat center; background-size: contain; }
+      #unity-warning { position: absolute; left: 50%; top: 5%; transform: translate(-50%); background: #fffbe6; border: 1px solid #f0c040; padding: 10px 16px; border-radius: 6px; display: none; z-index: 20; font-size: 13px; color: #333; max-width: 420px; text-align: center; }
     </style>
   </head>
   <body>
     <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
-        </div>
+      <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+
+      <!-- Loading overlay sits on top of the canvas -->
+      <div id="loading-overlay">
+        <div id="game-title">All Stars</div>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+        <div id="status-text">Initializing…</div>
       </div>
-      <div id="chunk-status">Downloading game data… 0%</div>
-      <div id="unity-warning"> </div>
+
+      <div id="unity-warning"></div>
       <div id="unity-footer">
         <div id="unity-logo-title-footer"></div>
-        <div id="unity-fullscreen-button"></div>
         <div id="unity-build-title">All Stars</div>
+        <div id="unity-fullscreen-button"></div>
       </div>
     </div>
 
     <script>
       // ─────────────────────────────────────────────────────────────────────────
-      // CONFIGURATION — replace with your actual GitHub Release URLs after
-      // running split_data.py and uploading the chunks to a GitHub Release.
-      // Example tag: https://github.com/nulltronprime/openglwebbuild/releases/download/gamedata-v1/
+      // DATA SOURCE
+      //
+      // The .data file is stored via Git LFS.
+      // media.githubusercontent.com serves LFS files with CORS headers — no
+      // chunking or proxy needed, and multiple players can stream simultaneously
+      // from GitHub's CDN.
       // ─────────────────────────────────────────────────────────────────────────
-      const CHUNK_BASE = "https://github.com/nulltronprime/openglwebbuild/releases/download/gamedata-v1/";
-      const CHUNK_URLS = [
-        "https://github.com/USERNAME/REPO/releases/download/TAG/data.part000",
-        "https://github.com/USERNAME/REPO/releases/download/TAG/data.part001",
-      ];
+      const DATA_URL =
+        "https://media.githubusercontent.com/media/nulltronprime/openglwebbuild/main/Build/all%20stars%20webgl%20port.data";
 
       // ─────────────────────────────────────────────────────────────────────────
 
-      var canvas = document.querySelector("#unity-canvas");
-      var statusEl = document.querySelector("#chunk-status");
-      var progressBarFull = document.querySelector("#unity-progress-bar-full");
+      var canvas      = document.getElementById("unity-canvas");
+      var overlay     = document.getElementById("loading-overlay");
+      var statusEl    = document.getElementById("status-text");
+      var progressEl  = document.getElementById("progress-fill");
 
-      function unityShowBanner(msg, type) {
-        var warningBanner = document.querySelector("#unity-warning");
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
-        }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
-        }
-        updateBannerVisibility();
+      function setProgress(pct) {
+        progressEl.style.width = Math.min(100, Math.round(pct)) + "%";
+      }
+
+      function setStatus(msg) {
+        statusEl.textContent = msg;
+      }
+
+      function showWarning(msg, type) {
+        var w = document.getElementById("unity-warning");
+        var div = document.createElement("div");
+        div.textContent = msg;
+        div.style.cssText = type === "error"
+          ? "background:#ffe0e0;padding:8px;margin:4px 0;border-radius:4px;"
+          : "background:#fffbe6;padding:8px;margin:4px 0;border-radius:4px;";
+        w.appendChild(div);
+        w.style.display = "block";
+        if (type !== "error") setTimeout(() => { w.removeChild(div); if (!w.children.length) w.style.display = "none"; }, 5000);
       }
 
       /**
-       * Downloads all chunks in parallel, then concatenates them.
-       * Returns a Promise<Blob> with the stitched data.
-       * onProgress(0‥1) is called as chunks arrive.
+       * Fetch the data file with streaming progress, return an object URL.
+       * Works for any number of simultaneous users — each gets their own CDN stream.
        */
-      async function downloadAndStitchChunks(urls, onProgress) {
-        const loaded = new Array(urls.length).fill(0);
-        const totals = new Array(urls.length).fill(0);
-        const buffers = new Array(urls.length);
+      async function fetchDataWithProgress(url) {
+        setStatus("Connecting…");
+        const response = await fetch(url, { mode: "cors" });
+        if (!response.ok) throw new Error(`HTTP ${response.status} fetching game data`);
 
-        function reportProgress() {
-          const totalBytes = totals.reduce((a, b) => a + b, 0);
-          const loadedBytes = loaded.reduce((a, b) => a + b, 0);
-          if (totalBytes > 0) onProgress(loadedBytes / totalBytes);
+        const contentLength = parseInt(response.headers.get("Content-Length") || "0");
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        setStatus("Downloading game data… 0%");
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (contentLength > 0) {
+            const pct = (received / contentLength) * 80; // first 80% = download
+            setProgress(pct);
+            setStatus(`Downloading game data… ${Math.round(received / contentLength * 100)}%`);
+          } else {
+            setStatus(`Downloading… ${(received / 1048576).toFixed(1)} MB`);
+          }
         }
 
-        await Promise.all(urls.map(async (url, i) => {
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(`Failed to fetch chunk ${i}: ${url} (${response.status})`);
-
-          const contentLength = response.headers.get("Content-Length");
-          totals[i] = contentLength ? parseInt(contentLength) : 0;
-
-          // Stream the response so we can report progress per chunk
-          const reader = response.body.getReader();
-          const chunks = [];
-          let received = 0;
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.length;
-            loaded[i] = received;
-            if (totals[i] === 0) totals[i] = received; // update estimate if no content-length
-            reportProgress();
-          }
-
-          // Concatenate this chunk's pieces
-          const total = chunks.reduce((sum, c) => sum + c.length, 0);
-          const combined = new Uint8Array(total);
-          let offset = 0;
-          for (const c of chunks) { combined.set(c, offset); offset += c.length; }
-          buffers[i] = combined;
-        }));
-
-        // Stitch all parts together
-        const totalSize = buffers.reduce((sum, b) => sum + b.length, 0);
-        const stitched = new Uint8Array(totalSize);
+        // Stitch chunks into a single Uint8Array
+        const total = chunks.reduce((s, c) => s + c.length, 0);
+        const merged = new Uint8Array(total);
         let offset = 0;
-        for (const buf of buffers) { stitched.set(buf, offset); offset += buf.length; }
+        for (const c of chunks) { merged.set(c, offset); offset += c.length; }
 
-        return new Blob([stitched], { type: "application/octet-stream" });
+        return URL.createObjectURL(new Blob([merged], { type: "application/octet-stream" }));
       }
 
       async function boot() {
-        document.querySelector("#unity-loading-bar").style.display = "block";
-        statusEl.style.display = "block";
+        // Mobile tweaks
+        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+          const meta = document.createElement("meta");
+          meta.name = "viewport";
+          meta.content = "width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes";
+          document.head.appendChild(meta);
+          document.getElementById("unity-container").className = "unity-mobile";
+          canvas.className = "unity-mobile";
+        } else {
+          canvas.style.width  = "960px";
+          canvas.style.height = "600px";
+        }
 
-        let dataUrl;
+        let dataObjectUrl;
         try {
-          statusEl.textContent = "Downloading game data… 0%";
-          const blob = await downloadAndStitchChunks(CHUNK_URLS, (p) => {
-            const pct = Math.round(p * 100);
-            statusEl.textContent = `Downloading game data… ${pct}%`;
-            // Use first half of bar for chunk download, second half for Unity init
-            progressBarFull.style.width = (p * 50) + "%";
-          });
-          dataUrl = URL.createObjectURL(blob);
-          statusEl.textContent = "Starting game…";
+          dataObjectUrl = await fetchDataWithProgress(DATA_URL);
         } catch (err) {
-          statusEl.textContent = "Download failed: " + err.message;
+          setStatus("Download failed: " + err.message);
           console.error(err);
           return;
         }
 
-        var buildUrl = "Build";
-        var config = {
-          arguments: [],
-          dataUrl: dataUrl,                                        // ← blob URL, no CORS issues
-          frameworkUrl: buildUrl + "/all stars webgl port.framework.js",
-          codeUrl:      buildUrl + "/all stars webgl port.wasm",
+        setStatus("Starting game…");
+        setProgress(85);
+
+        const buildUrl = "Build";
+        const config = {
+          arguments:          [],
+          dataUrl:            dataObjectUrl,
+          frameworkUrl:       buildUrl + "/all stars webgl port.framework.js",
+          codeUrl:            buildUrl + "/all stars webgl port.wasm",
           streamingAssetsUrl: "StreamingAssets",
-          companyName: "Drippy Studios",
-          productName: "All Stars",
-          productVersion: "3.0.27463.4823",
-          showBanner: unityShowBanner,
+          companyName:        "Drippy Studios",
+          productName:        "All Stars",
+          productVersion:     "3.0.27463.4823",
+          showBanner:         showWarning,
         };
 
-        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-          var meta = document.createElement('meta');
-          meta.name = 'viewport';
-          meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-          document.getElementsByTagName('head')[0].appendChild(meta);
-          document.querySelector("#unity-container").className = "unity-mobile";
-          canvas.className = "unity-mobile";
-        } else {
-          canvas.style.width = "960px";
-          canvas.style.height = "600px";
-        }
+        // Dynamically load the loader script
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = buildUrl + "/all stars webgl port.loader.js";
+          s.onload  = resolve;
+          s.onerror = () => reject(new Error("Failed to load loader script"));
+          document.body.appendChild(s);
+        });
 
-        var script = document.createElement("script");
-        script.src = buildUrl + "/all stars webgl port.loader.js";
-        script.onload = () => {
-          createUnityInstance(canvas, config, (progress) => {
-            // Unity's own progress covers the second half of the bar
-            progressBarFull.style.width = (50 + progress * 50) + "%";
-          }).then((unityInstance) => {
-            URL.revokeObjectURL(dataUrl); // free memory once Unity has parsed it
-            statusEl.style.display = "none";
-            document.querySelector("#unity-loading-bar").style.display = "none";
-            document.querySelector("#unity-fullscreen-button").onclick = () => {
-              unityInstance.SetFullscreen(1);
-            };
-          }).catch((message) => {
-            statusEl.textContent = "Unity error: " + message;
-            alert(message);
+        setProgress(90);
+
+        try {
+          const unityInstance = await createUnityInstance(canvas, config, (progress) => {
+            // Unity reports 0–1; map to 90–100%
+            setProgress(90 + progress * 10);
+            setStatus("Loading game… " + Math.round(90 + progress * 10) + "%");
           });
-        };
-        document.body.appendChild(script);
+
+          // Done — release the blob and hide the overlay
+          URL.revokeObjectURL(dataObjectUrl);
+          setProgress(100);
+          overlay.classList.add("fade-out");
+          setTimeout(() => { overlay.style.display = "none"; }, 600);
+
+          document.getElementById("unity-fullscreen-button").onclick = () => {
+            unityInstance.SetFullscreen(1);
+          };
+        } catch (msg) {
+          setStatus("Error: " + msg);
+          console.error(msg);
+        }
       }
 
       boot();
