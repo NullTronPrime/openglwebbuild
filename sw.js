@@ -36,14 +36,6 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  const balancingMatch = url.pathname.match(/(.*SerializedBalancingDataContainer_[\d.]+)\.0(\.bytes)$/);
-  if (balancingMatch) {
-    const rewritten = new URL(url.href);
-    rewritten.pathname = balancingMatch[1] + balancingMatch[2];
-    event.respondWith(fetch(rewritten.href));
-    return;
-  }
-
   event.respondWith(
     fetch(event.request)
       .then(function(response) {
