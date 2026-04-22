@@ -12,7 +12,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="All Stars">
+
     <script>
+      // ── Service Worker ────────────────────────────────────────────────────────
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
           navigator.serviceWorker.register('sw.js').catch(function (err) {
@@ -20,17 +22,54 @@
           });
         });
       }
+
+      // ── Audio intercept (must run BEFORE Unity loads) ─────────────────────────
+      // Patches AudioContext so we can insert a master gain node for the volume
+      // slider. Works regardless of how Unity internally manages audio.
+      (function () {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+
+        let _masterGain = null;
+
+        window.__setMasterVolume = function (v) {
+          v = Math.max(0, Math.min(1, v));
+          if (_masterGain) _masterGain.gain.setTargetAtTime(v, _masterGain.context.currentTime, 0.02);
+          try { localStorage.setItem('allstars_vol', v); } catch (_) {}
+        };
+
+        window.__getMasterVolume = function () {
+          try { return parseFloat(localStorage.getItem('allstars_vol') ?? '1'); } catch (_) { return 1; }
+        };
+
+        function PatchedAC(...args) {
+          // Use Reflect so all internal slots are initialised correctly
+          const ctx = Reflect.construct(Ctx, args, PatchedAC);
+
+          const gain = ctx.createGain();
+          gain.gain.value = window.__getMasterVolume();
+          gain.connect(ctx.destination);
+          _masterGain = gain;
+
+          // Re-route everything that connects to destination → our gain node
+          Object.defineProperty(ctx, 'destination', { get: () => gain, configurable: true });
+
+          return ctx;
+        }
+
+        PatchedAC.prototype = Ctx.prototype;
+        Object.setPrototypeOf(PatchedAC, Ctx);
+
+        if (window.AudioContext)       window.AudioContext       = PatchedAC;
+        if (window.webkitAudioContext) window.webkitAudioContext = PatchedAC;
+      })();
     </script>
+
     <style>
-      *, *::before, *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
       html, body {
-        width: 100%;
-        height: 100%;
+        width: 100%; height: 100%;
         background: #0a0a0a;
         overflow: hidden;
       }
@@ -42,19 +81,18 @@
         font-family: 'Segoe UI', system-ui, sans-serif;
       }
 
-      /* ── Wrapper that holds canvas + overlay, always centered ── */
+      /* ── Game container ── */
       #unity-container {
         position: relative;
-        /* size set by JS after we know the viewport */
         flex-shrink: 0;
       }
 
       #unity-canvas {
         display: block;
         background: #111;
-        /* fill whatever size the container is */
         width: 100%;
         height: 100%;
+        touch-action: none; /* improves mobile touch */
       }
 
       /* ── Loading overlay ── */
@@ -66,35 +104,24 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 18px;
+        gap: 14px;
         z-index: 10;
         transition: opacity 0.5s ease;
       }
-      #loading-overlay.fade-out {
-        opacity: 0;
-        pointer-events: none;
-      }
-      #loading-overlay.hidden {
-        display: none;
-      }
+      #loading-overlay.fade-out  { opacity: 0; pointer-events: none; }
+      #loading-overlay.hidden    { display: none; }
 
       #game-title {
-        color: #ffffff;
-        font-size: clamp(18px, 3vw, 30px);
+        color: #fff;
+        font-size: clamp(16px, 3vw, 28px);
         font-weight: 700;
-        letter-spacing: 0.22em;
+        letter-spacing: 0.2em;
         text-transform: uppercase;
       }
 
-      #status-text {
-        color: #777;
-        font-size: clamp(11px, 1.5vw, 13px);
-        letter-spacing: 0.06em;
-      }
-
       #progress-track {
-        width: min(260px, 60%);
-        height: 4px;
+        width: min(240px, 55vw);
+        height: 3px;
         background: #222;
         border-radius: 2px;
         overflow: hidden;
@@ -104,62 +131,121 @@
         width: 0%;
         background: linear-gradient(90deg, #4a9eff, #9b59ff);
         border-radius: 2px;
-        transition: width 0.25s ease;
+        transition: width 0.2s ease;
       }
 
-      /* ── Footer ── */
+      #status-text {
+        color: #555;
+        font-size: clamp(10px, 1.4vw, 12px);
+        letter-spacing: 0.05em;
+      }
+
+      /* ── Footer (fullscreen btn) ── */
       #unity-footer {
         position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
+        bottom: 0; left: 0; right: 0;
         display: flex;
         align-items: center;
         justify-content: flex-end;
-        padding: 6px 8px;
-        background: rgba(0,0,0,0.4);
+        padding: 4px 8px;
+        background: rgba(0,0,0,0.35);
         pointer-events: none;
         z-index: 5;
       }
       #unity-build-title {
-        color: #444;
-        font-size: 12px;
-        margin-right: 8px;
+        color: #333;
+        font-size: 11px;
+        margin-right: 6px;
         pointer-events: none;
+        user-select: none;
       }
       #unity-fullscreen-button {
         cursor: pointer;
-        width: 32px;
-        height: 32px;
+        width: 30px; height: 30px;
         background: url('TemplateData/fullscreen-button.png') no-repeat center;
         background-size: contain;
-        opacity: 0.5;
+        opacity: 0.45;
         transition: opacity 0.2s;
         pointer-events: all;
       }
-      #unity-fullscreen-button:hover { opacity: 1; }
+      #unity-fullscreen-button:hover { opacity: 0.9; }
+
+      /* ── Volume slider (right side, hidden in fullscreen) ── */
+      #vol-panel {
+        position: fixed;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 6px;
+        background: rgba(0,0,0,0.55);
+        border-radius: 8px 0 0 8px;
+        z-index: 20;
+        transition: opacity 0.3s;
+        /* hide while game not loaded */
+        opacity: 0;
+        pointer-events: none;
+      }
+      #vol-panel.ready {
+        opacity: 1;
+        pointer-events: all;
+      }
+      /* hide in fullscreen */
+      :fullscreen #vol-panel,
+      :-webkit-full-screen #vol-panel { display: none; }
+
+      #vol-label {
+        color: #888;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        user-select: none;
+      }
+
+      /* Vertical range input — works on all modern browsers */
+      #vol-slider {
+        -webkit-appearance: slider-vertical;
+        appearance: slider-vertical;
+        writing-mode: vertical-lr;
+        direction: rtl;
+        width: 22px;
+        height: 90px;
+        cursor: pointer;
+        accent-color: #4a9eff;
+      }
+
+      #vol-pct {
+        color: #666;
+        font-size: 9px;
+        user-select: none;
+      }
 
       /* ── Warning banner ── */
       #unity-warning {
         position: absolute;
-        left: 50%;
-        top: 8%;
-        transform: translate(-50%);
+        left: 50%; top: 8%;
+        transform: translateX(-50%);
         z-index: 20;
         display: none;
-        max-width: min(420px, 90%);
+        max-width: min(400px, 90%);
         text-align: center;
       }
       #unity-warning div {
-        padding: 10px 16px;
-        border-radius: 6px;
-        font-size: 12px;
+        padding: 8px 14px;
+        border-radius: 5px;
+        font-size: 11px;
         color: #333;
         margin-bottom: 4px;
       }
     </style>
   </head>
   <body>
+
     <div id="unity-container">
       <canvas id="unity-canvas" tabindex="-1"></canvas>
 
@@ -177,18 +263,40 @@
       </div>
     </div>
 
+    <!-- Volume panel sits outside the game container so it isn't clipped -->
+    <div id="vol-panel">
+      <div id="vol-label">Vol</div>
+      <input id="vol-slider" type="range" min="0" max="100"
+             value="100" step="1" title="Master Volume">
+      <div id="vol-pct">100%</div>
+    </div>
+
     <script>
       // ── Config ──────────────────────────────────────────────────────────────
-      const GAME_ASPECT = 960 / 600;   // native aspect ratio
+      const GAME_ASPECT = 960 / 600;
       const DATA_URL =
         "https://media.githubusercontent.com/media/nulltronprime/openglwebbuild/main/Build/all%20stars%20webgl%20port.data";
 
       // ── Elements ─────────────────────────────────────────────────────────────
-      const container   = document.getElementById("unity-container");
-      const canvas      = document.getElementById("unity-canvas");
-      const overlay     = document.getElementById("loading-overlay");
-      const statusEl    = document.getElementById("status-text");
-      const progressEl  = document.getElementById("progress-fill");
+      const container  = document.getElementById("unity-container");
+      const canvas     = document.getElementById("unity-canvas");
+      const overlay    = document.getElementById("loading-overlay");
+      const statusEl   = document.getElementById("status-text");
+      const progressEl = document.getElementById("progress-fill");
+      const volPanel   = document.getElementById("vol-panel");
+      const volSlider  = document.getElementById("vol-slider");
+      const volPct     = document.getElementById("vol-pct");
+
+      // ── Volume UI ─────────────────────────────────────────────────────────────
+      const savedVol = Math.round(window.__getMasterVolume() * 100);
+      volSlider.value = savedVol;
+      volPct.textContent = savedVol + "%";
+
+      volSlider.addEventListener("input", () => {
+        const v = parseInt(volSlider.value, 10);
+        volPct.textContent = v + "%";
+        window.__setMasterVolume(v / 100);
+      });
 
       // ── Helpers ───────────────────────────────────────────────────────────────
       function setProgress(pct) {
@@ -198,47 +306,63 @@
         statusEl.textContent = msg;
       }
       function showWarning(msg, type) {
-        const w   = document.getElementById("unity-warning");
-        const div = document.createElement("div");
-        div.textContent = msg;
-        div.style.background = type === "error" ? "#ffe0e0" : "#fffbe6";
-        w.appendChild(div);
+        const w = document.getElementById("unity-warning");
+        const d = document.createElement("div");
+        d.textContent = msg;
+        d.style.background = type === "error" ? "#ffe0e0" : "#fffbe6";
+        w.appendChild(d);
         w.style.display = "block";
         if (type !== "error")
-          setTimeout(() => { div.remove(); if (!w.children.length) w.style.display = "none"; }, 6000);
+          setTimeout(() => { d.remove(); if (!w.children.length) w.style.display = "none"; }, 6000);
       }
 
       // ── Responsive sizing ─────────────────────────────────────────────────────
       function resize() {
-        // Leave a small margin so nothing is clipped. On mobile use full window.
         const maxW = window.innerWidth;
         const maxH = window.innerHeight;
-
         let w, h;
-        if (maxW / maxH > GAME_ASPECT) {
-          // viewport is wider than the game → fit to height
-          h = maxH;
-          w = Math.round(h * GAME_ASPECT);
-        } else {
-          // viewport is taller than the game → fit to width
-          w = maxW;
-          h = Math.round(w / GAME_ASPECT);
-        }
-
+        if (maxW / maxH > GAME_ASPECT) { h = maxH; w = Math.round(h * GAME_ASPECT); }
+        else                           { w = maxW; h = Math.round(w / GAME_ASPECT); }
         container.style.width  = w + "px";
         container.style.height = h + "px";
         canvas.width  = w;
         canvas.height = h;
       }
-
       resize();
       window.addEventListener("resize", resize);
+
+      // ── Save-data persistence via IndexedDB ───────────────────────────────────
+      // Unity WebGL stores PlayerPrefs and file-based saves in an Emscripten
+      // virtual filesystem backed by IndexedDB. It only flushes when FS.syncfs()
+      // is called. We call it proactively so saves aren't lost on tab close.
+      let _fsSyncScheduled = false;
+      function persistSaves() {
+        if (typeof Module === "undefined" || !Module.FS || _fsSyncScheduled) return;
+        _fsSyncScheduled = true;
+        Module.FS.syncfs(false, function (err) {
+          _fsSyncScheduled = false;
+          if (err) console.warn("[AllStars] FS.syncfs error:", err);
+        });
+      }
+
+      // Flush on visibility change (tab switch / close)
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") persistSaves();
+      });
+      // Flush when window loses focus
+      window.addEventListener("blur", persistSaves);
+      // Flush on beforeunload (best-effort — browser may ignore async ops here)
+      window.addEventListener("beforeunload", persistSaves);
+      // Periodic flush every 30 s while the page is visible
+      setInterval(() => {
+        if (document.visibilityState === "visible") persistSaves();
+      }, 30_000);
 
       // ── Streaming download ────────────────────────────────────────────────────
       async function fetchDataWithProgress(url) {
         setStatus("Connecting…");
         const response = await fetch(url, { mode: "cors" });
-        if (!response.ok) throw new Error(`HTTP ${response.status} fetching game data`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const contentLength = parseInt(response.headers.get("Content-Length") || "0");
         const reader = response.body.getReader();
@@ -263,9 +387,8 @@
 
         const total  = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(total);
-        let offset   = 0;
+        let   offset = 0;
         for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-
         return URL.createObjectURL(new Blob([merged], { type: "application/octet-stream" }));
       }
 
@@ -280,7 +403,7 @@
           return;
         }
 
-        setStatus("Starting game…");
+        setStatus("Starting…");
         setProgress(85);
 
         const buildUrl = "Build";
@@ -296,12 +419,11 @@
           showBanner:         showWarning,
         };
 
-        // Load Unity loader script
         await new Promise((resolve, reject) => {
-          const s    = document.createElement("script");
-          s.src      = buildUrl + "/all stars webgl port.loader.js";
-          s.onload   = resolve;
-          s.onerror  = () => reject(new Error("Failed to load Unity loader script"));
+          const s   = document.createElement("script");
+          s.src     = buildUrl + "/all stars webgl port.loader.js";
+          s.onload  = resolve;
+          s.onerror = () => reject(new Error("Failed to load loader script"));
           document.body.appendChild(s);
         });
 
@@ -315,14 +437,20 @@
 
           URL.revokeObjectURL(dataObjectUrl);
           setProgress(100);
+
+          // Trigger an initial FS sync so the DB is set up
+          setTimeout(persistSaves, 2000);
+
           overlay.classList.add("fade-out");
           setTimeout(() => { overlay.classList.add("hidden"); }, 600);
+
+          // Show volume panel
+          volPanel.classList.add("ready");
 
           document.getElementById("unity-fullscreen-button").onclick = () => {
             unityInstance.SetFullscreen(1);
           };
 
-          // Re-apply sizing after Unity is loaded (it can override canvas size)
           resize();
         } catch (msg) {
           setStatus("Error: " + msg);
