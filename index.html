@@ -14,7 +14,6 @@
     <meta name="apple-mobile-web-app-title" content="All Stars">
 
     <script>
-      // ── Service Worker ────────────────────────────────────────────────────────
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
           navigator.serviceWorker.register('sw.js').catch(function (err) {
@@ -23,43 +22,29 @@
         });
       }
 
-      // ── Audio intercept (must run BEFORE Unity loads) ─────────────────────────
-      // Patches AudioContext so we can insert a master gain node for the volume
-      // slider. Works regardless of how Unity internally manages audio.
       (function () {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
-
         let _masterGain = null;
-
         window.__setMasterVolume = function (v) {
           v = Math.max(0, Math.min(1, v));
           if (_masterGain) _masterGain.gain.setTargetAtTime(v, _masterGain.context.currentTime, 0.02);
           try { localStorage.setItem('allstars_vol', v); } catch (_) {}
         };
-
         window.__getMasterVolume = function () {
           try { return parseFloat(localStorage.getItem('allstars_vol') ?? '1'); } catch (_) { return 1; }
         };
-
         function PatchedAC(...args) {
-          // Use Reflect so all internal slots are initialised correctly
           const ctx = Reflect.construct(Ctx, args, PatchedAC);
-
           const gain = ctx.createGain();
           gain.gain.value = window.__getMasterVolume();
           gain.connect(ctx.destination);
           _masterGain = gain;
-
-          // Re-route everything that connects to destination → our gain node
           Object.defineProperty(ctx, 'destination', { get: () => gain, configurable: true });
-
           return ctx;
         }
-
         PatchedAC.prototype = Ctx.prototype;
         Object.setPrototypeOf(PatchedAC, Ctx);
-
         if (window.AudioContext)       window.AudioContext       = PatchedAC;
         if (window.webkitAudioContext) window.webkitAudioContext = PatchedAC;
       })();
@@ -70,7 +55,7 @@
 
       html, body {
         width: 100%; height: 100%;
-        background: #0a0a0a;
+        background: #000;
         overflow: hidden;
       }
 
@@ -81,7 +66,6 @@
         font-family: 'Segoe UI', system-ui, sans-serif;
       }
 
-      /* ── Game container ── */
       #unity-container {
         position: relative;
         flex-shrink: 0;
@@ -92,10 +76,9 @@
         background: #111;
         width: 100%;
         height: 100%;
-        touch-action: none; /* improves mobile touch */
+        touch-action: none;
       }
 
-      /* ── Loading overlay ── */
       #loading-overlay {
         position: absolute;
         inset: 0;
@@ -108,8 +91,8 @@
         z-index: 10;
         transition: opacity 0.5s ease;
       }
-      #loading-overlay.fade-out  { opacity: 0; pointer-events: none; }
-      #loading-overlay.hidden    { display: none; }
+      #loading-overlay.fade-out { opacity: 0; pointer-events: none; }
+      #loading-overlay.hidden   { display: none; }
 
       #game-title {
         color: #fff;
@@ -129,7 +112,7 @@
       #progress-fill {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, #4a9eff, #9b59ff);
+        background: #fff;
         border-radius: 2px;
         transition: width 0.2s ease;
       }
@@ -140,7 +123,6 @@
         letter-spacing: 0.05em;
       }
 
-      /* ── Footer (fullscreen btn) ── */
       #unity-footer {
         position: absolute;
         bottom: 0; left: 0; right: 0;
@@ -167,10 +149,10 @@
         opacity: 0.45;
         transition: opacity 0.2s;
         pointer-events: all;
+        filter: grayscale(1);
       }
       #unity-fullscreen-button:hover { opacity: 0.9; }
 
-      /* ── Volume slider (right side, hidden in fullscreen) ── */
       #vol-panel {
         position: fixed;
         right: 0;
@@ -185,15 +167,10 @@
         border-radius: 8px 0 0 8px;
         z-index: 20;
         transition: opacity 0.3s;
-        /* hide while game not loaded */
         opacity: 0;
         pointer-events: none;
       }
-      #vol-panel.ready {
-        opacity: 1;
-        pointer-events: all;
-      }
-      /* hide in fullscreen */
+      #vol-panel.ready { opacity: 1; pointer-events: all; }
       :fullscreen #vol-panel,
       :-webkit-full-screen #vol-panel { display: none; }
 
@@ -207,14 +184,13 @@
         user-select: none;
       }
 
-      /* Vertical range input — standards-compliant, no deprecated appearance keyword */
       #vol-slider {
         writing-mode: vertical-lr;
         direction: rtl;
         width: 22px;
         height: 90px;
         cursor: pointer;
-        accent-color: #4a9eff;
+        accent-color: #fff;
       }
 
       #vol-pct {
@@ -223,7 +199,6 @@
         user-select: none;
       }
 
-      /* ── Warning banner ── */
       #unity-warning {
         position: absolute;
         left: 50%; top: 8%;
@@ -237,9 +212,65 @@
         padding: 8px 14px;
         border-radius: 5px;
         font-size: 11px;
-        color: #333;
+        color: #ccc;
+        background: #1a1a1a;
         margin-bottom: 4px;
       }
+
+      #crash-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0,0,0,.92);
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        z-index: 99;
+        padding: 24px;
+        text-align: center;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: #fff;
+      }
+      #crash-overlay.visible { display: flex; }
+
+      #crash-title {
+        font-size: clamp(14px, 2.5vw, 20px);
+        font-weight: 700;
+        letter-spacing: 0.1em;
+      }
+
+      #crash-message {
+        font-family: monospace;
+        font-size: clamp(9px, 1.2vw, 11px);
+        color: #888;
+        max-width: 520px;
+        width: 100%;
+        word-break: break-word;
+        white-space: pre-wrap;
+        text-align: left;
+        background: #111;
+        border: 1px solid #222;
+        border-radius: 4px;
+        padding: 10px 14px;
+        max-height: 200px;
+        overflow-y: auto;
+        line-height: 1.5;
+      }
+
+      #crash-reload {
+        margin-top: 4px;
+        padding: 10px 28px;
+        border: 1px solid #444;
+        border-radius: 5px;
+        background: #1a1a1a;
+        color: #fff;
+        font-size: clamp(11px, 1.4vw, 13px);
+        font-weight: 600;
+        cursor: pointer;
+        letter-spacing: 0.08em;
+      }
+      #crash-reload:hover { background: #222; }
     </style>
   </head>
   <body>
@@ -259,23 +290,24 @@
         <div id="unity-build-title">All Stars</div>
         <div id="unity-fullscreen-button" title="Fullscreen"></div>
       </div>
+
+      <div id="crash-overlay">
+        <div id="crash-title">Game Crashed</div>
+        <div id="crash-message"></div>
+        <button id="crash-reload" onclick="location.reload()">Reload Game</button>
+      </div>
     </div>
 
-    <!-- Volume panel sits outside the game container so it isn't clipped -->
     <div id="vol-panel">
       <div id="vol-label">Vol</div>
-      <input id="vol-slider" type="range" min="0" max="100"
-             value="100" step="1" title="Master Volume">
+      <input id="vol-slider" type="range" min="0" max="100" value="100" step="1" title="Master Volume">
       <div id="vol-pct">100%</div>
     </div>
 
     <script>
-      // ── Config ──────────────────────────────────────────────────────────────
       const GAME_ASPECT = 960 / 600;
-      const DATA_URL =
-        "https://media.githubusercontent.com/media/nulltronprime/openglwebbuild/main/Build/all%20stars%20webgl%20port.data";
+      const DATA_URL = "https://media.githubusercontent.com/media/nulltronprime/openglwebbuild/main/Build/all%20stars%20webgl%20port.data";
 
-      // ── Elements ─────────────────────────────────────────────────────────────
       const container  = document.getElementById("unity-container");
       const canvas     = document.getElementById("unity-canvas");
       const overlay    = document.getElementById("loading-overlay");
@@ -285,36 +317,68 @@
       const volSlider  = document.getElementById("vol-slider");
       const volPct     = document.getElementById("vol-pct");
 
-      // ── Volume UI ─────────────────────────────────────────────────────────────
       const savedVol = Math.round(window.__getMasterVolume() * 100);
       volSlider.value = savedVol;
       volPct.textContent = savedVol + "%";
-
       volSlider.addEventListener("input", () => {
         const v = parseInt(volSlider.value, 10);
         volPct.textContent = v + "%";
         window.__setMasterVolume(v / 100);
       });
 
-      // ── Helpers ───────────────────────────────────────────────────────────────
-      function setProgress(pct) {
-        progressEl.style.width = Math.min(100, Math.round(pct)) + "%";
-      }
-      function setStatus(msg) {
-        statusEl.textContent = msg;
-      }
+      function setProgress(pct) { progressEl.style.width = Math.min(100, Math.round(pct)) + "%"; }
+      function setStatus(msg)   { statusEl.textContent = msg; }
+
       function showWarning(msg, type) {
         const w = document.getElementById("unity-warning");
         const d = document.createElement("div");
         d.textContent = msg;
-        d.style.background = type === "error" ? "#ffe0e0" : "#fffbe6";
         w.appendChild(d);
         w.style.display = "block";
         if (type !== "error")
           setTimeout(() => { d.remove(); if (!w.children.length) w.style.display = "none"; }, 6000);
       }
 
-      // ── Responsive sizing ─────────────────────────────────────────────────────
+      function showCrash(msg) {
+        const el = document.getElementById("crash-overlay");
+        if (el.classList.contains("visible")) return;
+        document.getElementById("crash-message").textContent =
+          typeof msg === "string" ? msg : JSON.stringify(msg, null, 2);
+        el.classList.add("visible");
+      }
+
+      const _origAlert = window.alert.bind(window);
+      window.alert = function (msg) {
+        if (typeof msg === "string" &&
+            (msg.toLowerCase().includes("error") || msg.toLowerCase().includes("exception"))) {
+          showCrash(msg);
+        } else {
+          _origAlert(msg);
+        }
+      };
+
+      const _origConsoleError = console.error.bind(console);
+      console.error = function (...args) {
+        _origConsoleError(...args);
+        const msg = args.join(" ");
+        if (msg.includes("Halting program") || msg.includes("Uncaught exception from main loop")) {
+          showCrash(msg);
+        }
+      };
+
+      window.addEventListener("error", function (e) {
+        const msg = (e.error ? e.error.stack || e.error.toString() : "") || e.message || String(e);
+        if (msg.includes("wasm") || msg.includes("Unity") || msg.includes("Uncaught")) {
+          showCrash(msg);
+        }
+      });
+
+      try {
+        const blob   = new Blob(["let iv=setInterval(()=>self.postMessage('t'),200);"], { type: "application/javascript" });
+        const worker = new Worker(URL.createObjectURL(blob));
+        worker.onmessage = () => {};
+      } catch (_) {}
+
       function resize() {
         const maxW = window.innerWidth;
         const maxH = window.innerHeight;
@@ -329,133 +393,27 @@
       resize();
       window.addEventListener("resize", resize);
 
-      // ── Save-data persistence via IndexedDB ───────────────────────────────────
-      // Unity WebGL maps file I/O to an Emscripten IDBFS virtual filesystem.
-      // Saves are only flushed to IndexedDB when FS.syncfs(false, cb) is called.
-      // We reach the FS through unityInstance.Module (set after boot() completes).
-      let _unityModule = null;   // set once Unity is loaded
-      let _fsSyncBusy  = false;
-
-      function persistSaves() {
-        if (!_unityModule || !_unityModule.FS || _fsSyncBusy) return;
-        _fsSyncBusy = true;
-        try {
-          _unityModule.FS.syncfs(false, function (err) {
-            _fsSyncBusy = false;
-            if (err) console.warn("[AllStars] FS.syncfs error:", err);
-            else     console.log("[AllStars] Save flushed to IndexedDB.");
-          });
-        } catch (e) {
-          _fsSyncBusy = false;
-          console.warn("[AllStars] FS.syncfs threw:", e);
-        }
-      }
-
-      // Flush whenever saves are likely to have happened
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") persistSaves();
-      });
-      window.addEventListener("blur",         persistSaves);
-      window.addEventListener("beforeunload", persistSaves);
-      // Periodic flush every 20 s (catches mid-session saves)
-      setInterval(persistSaves, 20_000);
-
-      // ── Background-throttle prevention ────────────────────────────────────────
-      // Browsers throttle rAF and timers in background tabs, which drops Unity
-      // below 60 fps when the window loses focus. A Web Worker runs at full speed
-      // regardless of tab visibility — we use it to ping the page and keep timers alive.
-      const _workerSrc = `
-        let iv = setInterval(() => self.postMessage('tick'), 200);
-      `;
-      try {
-        const blob   = new Blob([_workerSrc], { type: 'application/javascript' });
-        const worker = new Worker(URL.createObjectURL(blob));
-        // The message just keeps the event loop warm; Unity's own rAF handles rendering.
-        worker.onmessage = () => {};
-      } catch (_) { /* worker blocked by CSP — not critical */ }
-
-      // ── Crash recovery ────────────────────────────────────────────────────────
-      // Unity calls window.alert() on a fatal WASM exception. We intercept it,
-      // flush saves first, then offer a one-click restart instead of freezing.
-      const _origAlert = window.alert.bind(window);
-      window.alert = function (msg) {
-        if (typeof msg === 'string' && msg.toLowerCase().includes('error')) {
-          console.error('[AllStars] Unity fatal error:', msg);
-          persistSaves();
-          showCrashOverlay(msg);
-        } else {
-          _origAlert(msg);
-        }
-      };
-
-      // Also catch the Unity "Halting program" path which goes through console.error
-      const _origConsoleError = console.error.bind(console);
-      console.error = function (...args) {
-        _origConsoleError(...args);
-        const msg = args.join(' ');
-        if (msg.includes('Halting program') || msg.includes('Uncaught exception from main loop')) {
-          persistSaves();
-          showCrashOverlay(msg);
-        }
-      };
-
-      function showCrashOverlay(msg) {
-        // Only show once
-        if (document.getElementById('crash-overlay')) return;
-        persistSaves();
-        const el = document.createElement('div');
-        el.id = 'crash-overlay';
-        el.style.cssText = `
-          position:absolute;inset:0;background:rgba(0,0,0,.85);
-          display:flex;flex-direction:column;align-items:center;
-          justify-content:center;gap:16px;z-index:99;
-          font-family:'Segoe UI',system-ui,sans-serif;color:#fff;padding:24px;
-          text-align:center;
-        `;
-        el.innerHTML = `
-          <div style="font-size:clamp(14px,2.5vw,22px);font-weight:700;letter-spacing:.1em;">
-            Game Crashed
-          </div>
-          <div style="font-size:clamp(10px,1.3vw,12px);color:#888;max-width:340px;word-break:break-word;">
-            Your progress has been saved. Reload to continue.
-          </div>
-          <button onclick="location.reload()" style="
-            margin-top:8px;padding:10px 28px;border:none;border-radius:6px;
-            background:linear-gradient(90deg,#4a9eff,#9b59ff);
-            color:#fff;font-size:clamp(12px,1.5vw,14px);font-weight:600;
-            cursor:pointer;letter-spacing:.08em;
-          ">Reload Game</button>
-        `;
-        container.appendChild(el);
-      }
-
-      // ── Streaming download ────────────────────────────────────────────────────
       async function fetchDataWithProgress(url) {
         setStatus("Connecting…");
         const response = await fetch(url, { mode: "cors" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
+        if (!response.ok) throw new Error(`HTTP ${response.status} — ${url}`);
         const contentLength = parseInt(response.headers.get("Content-Length") || "0");
         const reader = response.body.getReader();
         const chunks = [];
         let received = 0;
-
         setStatus("Downloading… 0%");
-
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           chunks.push(value);
           received += value.length;
           if (contentLength > 0) {
-            const pct = (received / contentLength) * 80;
-            setProgress(pct);
+            setProgress((received / contentLength) * 80);
             setStatus(`Downloading… ${Math.round(received / contentLength * 100)}%`);
           } else {
             setStatus(`Downloading… ${(received / 1048576).toFixed(1)} MB`);
           }
         }
-
         const total  = chunks.reduce((s, c) => s + c.length, 0);
         const merged = new Uint8Array(total);
         let   offset = 0;
@@ -463,14 +421,14 @@
         return URL.createObjectURL(new Blob([merged], { type: "application/octet-stream" }));
       }
 
-      // ── Boot ──────────────────────────────────────────────────────────────────
       async function boot() {
         let dataObjectUrl;
         try {
           dataObjectUrl = await fetchDataWithProgress(DATA_URL);
         } catch (err) {
-          setStatus("Download failed: " + err.message);
-          console.error(err);
+          const text = (err.stack || err.message || String(err));
+          setStatus("Download failed");
+          showCrash("Download failed:\n" + text);
           return;
         }
 
@@ -479,15 +437,16 @@
 
         const buildUrl = "Build";
         const config = {
-          arguments:          [],
-          dataUrl:            dataObjectUrl,
-          frameworkUrl:       buildUrl + "/all stars webgl port.framework.js",
-          codeUrl:            buildUrl + "/all stars webgl port.wasm",
-          streamingAssetsUrl: "StreamingAssets",
-          companyName:        "Drippy Studios",
-          productName:        "All Stars",
-          productVersion:     "3.0.27463.4823",
-          showBanner:         showWarning,
+          arguments:                  [],
+          dataUrl:                    dataObjectUrl,
+          frameworkUrl:               buildUrl + "/all stars webgl port.framework.js",
+          codeUrl:                    buildUrl + "/all stars webgl port.wasm",
+          streamingAssetsUrl:         "StreamingAssets",
+          companyName:                "Drippy Studios",
+          productName:                "All Stars",
+          productVersion:             "3.0.27463.4823",
+          autoSyncPersistentDataPath: true,
+          showBanner:                 showWarning,
         };
 
         await new Promise((resolve, reject) => {
@@ -509,16 +468,9 @@
           URL.revokeObjectURL(dataObjectUrl);
           setProgress(100);
 
-          // Wire up the FS reference so persistSaves() can reach it
-          _unityModule = unityInstance.Module;
-
-          // Initial sync — mounts the IDBFS and loads any existing save data
-          setTimeout(persistSaves, 2000);
-
           overlay.classList.add("fade-out");
-          setTimeout(() => { overlay.classList.add("hidden"); }, 600);
+          setTimeout(() => overlay.classList.add("hidden"), 600);
 
-          // Show volume panel
           volPanel.classList.add("ready");
 
           document.getElementById("unity-fullscreen-button").onclick = () => {
@@ -526,9 +478,10 @@
           };
 
           resize();
-        } catch (msg) {
-          setStatus("Error: " + msg);
-          console.error(msg);
+        } catch (err) {
+          const text = (err && err.stack) ? err.stack : String(err);
+          setStatus("Error: " + text.split("\n")[0]);
+          showCrash(text);
         }
       }
 
