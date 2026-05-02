@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>All Stars</title>
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+
+    <script>
+      (function() {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        let _masterGain = null;
+        
+        function sliderToVolume(sliderVal) {
+          var minDb = -60;
+          var maxDb = 0;
+          var db = minDb + (sliderVal / 100) * (maxDb - minDb);
+          return Math.pow(10, db / 20);
+        }
+        
+        function volumeToSlider(vol) {
+          var db = 20 * Math.log10(Math.max(0.0001, vol));
+          var sliderVal = (db - (-60)) / (0 - (-60)) * 100;
+          return Math.max(0, Math.min(100, sliderVal));
+        }
+        
+        window.__setMasterVolume = function(v) {
+          v = Math.max(0, Math.min(1, v));
+          if (_masterGain) _masterGain.gain.setTargetAtTime(v, _masterGain.context.currentTime, 0.02);
+          try { localStorage.setItem('allstars_vol', v); } catch (_) {}
+        };
+        
+        window.__getMasterVolume = function() {
+          try { return parseFloat(localStorage.getItem('allstars_vol') ?? '1'); } catch (_) { return 1; }
+        };
+        
+        window.__getVolumeSlider = function() {
+          return volumeToSlider(window.__getMasterVolume());
+        };
+        
+        window.__setVolumeSlider = function(sliderVal) {
+          window.__setMasterVolume(sliderToVolume(sliderVal));
+        };
+        
+        function PatchedAC(...args) {
+          const ctx = Reflect.construct(Ctx, args, PatchedAC);
+          const gain = ctx.createGain();
+          gain.gain.value = window.__getMasterVolume();
+          gain.connect(ctx.destination);
+          _masterGain = gain;
+          Object.defineProperty(ctx, 'destination', { get: () => gain, configurable: true });
+          return ctx;
+        }
+        PatchedAC.prototype = Ctx.prototype;
+        Object.setPrototypeOf(PatchedAC, Ctx);
+        if (window.AudioContext) window.AudioContext = PatchedAC;
+        if (window.webkitAudioContext) window.webkitAudioContext = PatchedAC;
+      })();
+      
+      function getAllStorageData() {
+        var data = {};
+        for (var key in localStorage) {
+          if (localStorage.hasOwnProperty(key)) {
+            try {
+              data[key] = localStorage[key];
+            } catch(e) {}
+          }
+        }
+        return data;
+      }
+      
+      function importAllStorageData(data) {
+        for (var key in data) {
+          if (data.hasOwnProperty(key)) {
+            try {
+              localStorage.setItem(key, data[key]);
+            } catch(e) {}
+          }
+        }
+      }
+      
+      window.__exportPlayerData = function() {
+        try {
+          var data = getAllStorageData();
+          var blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'allstars_save_' + Date.now() + '.json';
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch(e) {
+          alert('Export failed: ' + e);
+        }
+      };
+      
+      window.__importPlayerData = function() {
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = function(e) {
+          var file = e.target.files[0];
+          if (!file) return;
+          var reader = new FileReader();
+          reader.onload = function(evt) {
+            try {
+              var data = JSON.parse(evt.target.result);
+              importAllStorageData(data);
+              alert('Save imported! Reload to apply.');
+            } catch(e) {
+              alert('Invalid save file');
+            }
+          };
+          reader.readAsText(file);
+        };
+        input.click();
+      };
+      
+      window.addEventListener('beforeunload', function() {
+        try {
+          PlayerPrefs.Save();
+        } catch(e) {}
+      });
+    </script>
+
+    <style>
+      html, body {
+        width: 100%; height: 100%;
+        margin: 0; padding: 0;
+        background: #000;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      #unity-container {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #unity-canvas {
+        background: #111;
+        max-width: 100%;
+        max-height: 100%;
+      }
+
+      #loading-overlay {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        background: #0d0d0d;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        z-index: 10;
+        transition: opacity 0.5s ease;
+      }
+
+      #loading-overlay.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #loading-overlay.hidden {
+        display: none;
+      }
+
+      #game-title {
+        color: #fff;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      #progress-track {
+        width: 200px;
+        height: 4px;
+        background: #222;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      #progress-fill {
+        height: 100%;
+        width: 0%;
+        background: #fff;
+        border-radius: 2px;
+        transition: width 0.2s ease;
+      }
+
+      #status-text {
+        color: #666;
+        font-size: 12px;
+      }
+
+      #unity-fullscreen-button {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        width: 36px;
+        height: 36px;
+        background: rgba(255,255,255,0.1);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+      }
+
+      #unity-fullscreen-button:hover {
+        opacity: 1;
+        background: rgba(255,255,255,0.2);
+      }
+
+      #unity-fullscreen-button::before {
+        content: '';
+        display: block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #fff;
+        border-radius: 2px;
+      }
+
+      :fullscreen #unity-fullscreen-button::before,
+      :-webkit-full-screen #unity-fullscreen-button::before {
+        border-radius: 0;
+        border: none;
+        width: 14px;
+        height: 14px;
+        background: 
+          linear-gradient(#fff, #fff),
+          linear-gradient(#fff, #fff);
+        background-size: 4px 14px, 14px 4px;
+        background-position: 0 0, 0 0;
+        background-repeat: no-repeat;
+      }
+
+      #data-panel {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        z-index: 20;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s, transform 0.3s;
+      }
+
+      #data-panel.ready {
+        opacity: 1;
+        pointer-events: all;
+        transform: translateY(-50%) translateX(0);
+      }
+
+      :fullscreen #data-panel,
+      :-webkit-full-screen #data-panel {
+        display: none;
+      }
+
+      .data-btn {
+        padding: 8px 14px;
+        background: rgba(30,30,30,0.85);
+        border: 1px solid #333;
+        border-radius: 6px;
+        color: #aaa;
+        font-size: 10px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.25s ease;
+        transform: translateX(-5px);
+      }
+
+      #data-panel.ready .data-btn {
+        transform: translateX(0);
+      }
+
+      .data-btn:hover {
+        background: rgba(50,50,50,0.9);
+        color: #fff;
+        border-color: #555;
+        transform: translateX(0);
+      }
+
+      .data-btn:active {
+        transform: scale(0.96) translateX(0);
+      }
+
+      #vol-panel {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 10px;
+        background: rgba(20,20,20,0.85);
+        border-radius: 10px;
+        border: 1px solid #2a2a2a;
+        z-index: 20;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+      }
+
+      #vol-panel.ready {
+        opacity: 1;
+        pointer-events: all;
+      }
+
+      :fullscreen #vol-panel,
+      :-webkit-full-screen #vol-panel {
+        display: none;
+      }
+
+      #vol-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 70px;
+        height: 4px;
+        background: linear-gradient(to right, #333 0%, #333 100%);
+        border-radius: 2px;
+        cursor: pointer;
+        outline: none;
+      }
+
+      #vol-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 12px;
+        height: 12px;
+        background: linear-gradient(135deg, #fff 0%, #ccc 100%);
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        transition: transform 0.15s;
+      }
+
+      #vol-slider::-webkit-slider-thumb:hover {
+        transform: scale(1.15);
+      }
+
+      #vol-pct {
+        color: #666;
+        font-size: 9px;
+        font-weight: 500;
+      }
+
+      #unity-warning {
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 20;
+        display: none;
+        max-width: 90%;
+      }
+
+      #unity-warning div {
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        color: #ccc;
+        background: rgba(0,0,0,0.8);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="unity-container">
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
+
+      <div id="loading-overlay">
+        <div id="game-title">All Stars</div>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+        <div id="status-text">Loading…</div>
+      </div>
+
+      <div id="unity-warning"></div>
+
+      <button id="unity-fullscreen-button" title="Fullscreen"></button>
+    </div>
+
+    <div id="data-panel">
+      <button class="data-btn" onclick="__exportPlayerData()">Export Save</button>
+      <button class="data-btn" onclick="__importPlayerData()">Import Save</button>
+    </div>
+
+    <div id="vol-panel">
+      <input id="vol-slider" type="range" min="0" max="100" value="100" step="1" title="Volume">
+      <div id="vol-pct">100%</div>
+    </div>
+
+    <script src="Build/unitywebglbuild.loader.js"></script>
+    <script>
+      var buildUrl = "Build";
+      var config = {
+        dataUrl: buildUrl + "/unitywebglbuild.data",
+        frameworkUrl: buildUrl + "/unitywebglbuild.framework.js",
+        codeUrl: buildUrl + "/unitywebglbuild.wasm",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "Drippy Studios",
+        productName: "All Stars",
+        productVersion: "3.0.27463.4823",
+      };
+
+      var canvas = document.getElementById("unity-canvas");
+      var container = document.getElementById("unity-container");
+      var progressFill = document.getElementById("progress-fill");
+      var statusText = document.getElementById("status-text");
+      var loadingOverlay = document.getElementById("loading-overlay");
+      var fullscreenBtn = document.getElementById("unity-fullscreen-button");
+      var volPanel = document.getElementById("vol-panel");
+      var volSlider = document.getElementById("vol-slider");
+      var volPct = document.getElementById("vol-pct");
+      var dataPanel = document.getElementById("data-panel");
+      var warningBanner = document.getElementById("unity-warning");
+
+      function showWarning(msg) {
+        var div = document.createElement('div');
+        div.textContent = msg;
+        warningBanner.appendChild(div);
+        warningBanner.style.display = 'block';
+        setTimeout(function() {
+          div.remove();
+          if (warningBanner.children.length === 0) {
+            warningBanner.style.display = 'none';
+          }
+        }, 5000);
+      }
+
+      var gameAspect = 960 / 600;
+      
+      function resizeCanvas() {
+        var maxW = window.innerWidth;
+        var maxH = window.innerHeight;
+        
+        var fitW, fitH;
+        
+        if (maxW / maxH > gameAspect) {
+          fitH = maxH;
+          fitW = fitH * gameAspect;
+        } else {
+          fitW = maxW;
+          fitH = fitW / gameAspect;
+        }
+        
+        canvas.width = 960;
+        canvas.height = 600;
+        canvas.style.width = fitW + "px";
+        canvas.style.height = fitH + "px";
+      }
+      
+      window.addEventListener("resize", resizeCanvas);
+      window.addEventListener("resize", function() {
+        setTimeout(resizeCanvas, 100);
+      });
+      resizeCanvas();
+
+      createUnityInstance(canvas, config, function(progress) {
+        var pct = Math.round(progress * 100);
+        progressFill.style.width = pct + "%";
+        statusText.textContent = "Loading… " + pct + "%";
+      }).then(function(unityInstance) {
+        loadingOverlay.classList.add("fade-out");
+        setTimeout(function() {
+          loadingOverlay.classList.add("hidden");
+        }, 600);
+        
+        fullscreenBtn.onclick = function() {
+          unityInstance.SetFullscreen(1);
+        };
+        
+        var initialSlider = window.__getVolumeSlider();
+        volSlider.value = initialSlider;
+        volPct.textContent = Math.round(initialSlider) + "%";
+        
+        volSlider.addEventListener("input", function() {
+          var v = parseInt(volSlider.value, 10);
+          volPct.textContent = v + "%";
+          window.__setVolumeSlider(v);
+        });
+        
+        volPanel.classList.add("ready");
+        dataPanel.classList.add("ready");
+      }).catch(function(message) {
+        alert("Failed to load: " + message);
+      });
+    </script>
+  </body>
+</html>
