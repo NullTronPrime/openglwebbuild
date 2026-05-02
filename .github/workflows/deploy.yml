@@ -26,17 +26,29 @@ jobs:
         with:
           lfs: true
           fetch-depth: 0
+          submodules: recursive
 
-      - name: Download LFS files
-        run: git lfs fetch origin main && git lfs checkout
+      - name: Ensure LFS files are materialized
+        run: |
+          git lfs install
+          git lfs pull
+          git lfs checkout
+          ls -la Build/
+          file Build/unitywebglbuild.data
 
       - name: Verify no LFS pointers
         run: |
-          if grep -r "version https://git-lfs.github.com/spec" Build/ StreamingAssets/ 2>/dev/null; then
-            echo "Found LFS pointers!"
+          git lfs install
+          git lfs pull
+          git lfs checkout
+          echo "=== Checking data file ==="
+          head -c 100 Build/unitywebglbuild.data
+          echo ""
+          if grep -q "version https://git-lfs.github.com/spec" Build/unitywebglbuild.data; then
+            echo "ERROR: Still have LFS pointer!"
             exit 1
           fi
-          echo "All files are real binaries"
+          echo "SUCCESS: Data file is real binary"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
